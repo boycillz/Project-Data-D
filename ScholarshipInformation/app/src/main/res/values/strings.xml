@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Scholarship Information</string>
+    <string name="scholarship_name">Nama Beasiswa</string>
+    <string name="location">Lokasi</string>
+</resources>

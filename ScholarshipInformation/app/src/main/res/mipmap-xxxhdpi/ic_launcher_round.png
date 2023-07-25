@@ -1,0 +1,323 @@
+       }
+
+        float wpy = mLastWallpaperY >= 0 ? mLastWallpaperY : 0.5f;
+        float wpys = mLastWallpaperYStep >= 0 ? mLastWallpaperYStep : -1.0f;
+        int availh = wallpaperWin.mFrame.bottom - wallpaperWin.mFrame.top - dh;
+        offset = availh > 0 ? -(int)(availh * wpy + .5f) : 0;
+        if (mLastWallpaperDisplayOffsetY != Integer.MIN_VALUE) {
+            offset += mLastWallpaperDisplayOffsetY;
+        }
+        if (wallpaperWin.mYOffset != offset) {
+            if (DEBUG_WALLPAPER) Slog.v(TAG, "Update wallpaper " + wallpaperWin + " y: " + offset);
+            changed = true;
+            wallpaperWin.mYOffset = offset;
+        }
+        if (wallpaperWin.mWallpaperY != wpy || wallpaperWin.mWallpaperYStep != wpys) {
+            wallpaperWin.mWallpaperY = wpy;
+            wallpaperWin.mWallpaperYStep = wpys;
+            rawChanged = true;
+        }
+
+        if (rawChanged && (wallpaperWin.mAttrs.privateFlags &
+                WindowManager.LayoutParams.PRIVATE_FLAG_WANTS_OFFSET_NOTIFICATIONS) != 0) {
+            try {
+                if (DEBUG_WALLPAPER) Slog.v(TAG, "Report new wp offset "
+                        + wallpaperWin + " x=" + wallpaperWin.mWallpaperX
+                        + " y=" + wallpaperWin.mWallpaperY);
+                if (sync) {
+                    mWaitingOnWallpaper = wallpaperWin;
+                }
+                wallpaperWin.mClient.dispatchWallpaperOffsets(
+                        wallpaperWin.mWallpaperX, wallpaperWin.mWallpaperY,
+                        wallpaperWin.mWallpaperXStep, wallpaperWin.mWallpaperYStep, sync);
+                if (sync) {
+                    if (mWaitingOnWallpaper != null) {
+                        long start = SystemClock.uptimeMillis();
+                        if ((mLastWallpaperTimeoutTime + WALLPAPER_TIMEOUT_RECOVERY)
+                                < start) {
+                            try {
+                                if (DEBUG_WALLPAPER) Slog.v(TAG,
+                                        "Waiting for offset complete...");
+                                mService.mWindowMap.wait(WALLPAPER_TIMEOUT);
+                            } catch (InterruptedException e) {
+                            }
+                            if (DEBUG_WALLPAPER) Slog.v(TAG, "Offset complete!");
+                            if ((start + WALLPAPER_TIMEOUT) < SystemClock.uptimeMillis()) {
+                                Slog.i(TAG, "Timeout waiting for wallpaper to offset: "
+                                        + wallpaperWin);
+                                mLastWallpaperTimeoutTime = start;
+                            }
+                        }
+                        mWaitingOnWallpaper = null;
+                    }
+                }
+            } catch (RemoteException e) {
+            }
+        }
+
+        return changed;
+    }
+
+    void setWindowWallpaperPosition(
+            WindowState window, float x, float y, float xStep, float yStep) {
+        if (window.mWallpaperX != x || window.mWallpaperY != y)  {
+            window.mWallpaperX = x;
+            window.mWallpaperY = y;
+            window.mWallpaperXStep = xStep;
+            window.mWallpaperYStep = yStep;
+            updateWallpaperOffsetLocked(window, true);
+        }
+    }
+
+    void setWindowWallpaperDisplayOffset(WindowState window, int x, int y) {
+        if (window.mWallpaperDisplayOffsetX != x || window.mWallpaperDisplayOffsetY != y)  {
+            window.mWallpaperDisplayOffsetX = x;
+            window.mWallpaperDisplayOffsetY = y;
+            updateWallpaperOffsetLocked(window, true);
+        }
+    }
+
+    Bundle sendWindowWallpaperCommand(
+            WindowState window, String action, int x, int y, int z, Bundle extras, boolean sync) {
+        if (window == mWallpaperTarget
+                || window == mLowerWallpaperTarget
+                || window == mUpperWallpaperTarget) {
+            boolean doWait = sync;
+            for (int curTokenNdx = mWallpaperTokens.size() - 1; curTokenNdx >= 0; curTokenNdx--) {
+                final WindowList windows = mWallpaperTokens.get(curTokenNdx).windows;
+                for (int wallpaperNdx = windows.size() - 1; wallpaperNdx >= 0; wallpaperNdx--) {
+                    WindowState wallpaper = windows.get(wallpaperNdx);
+                    try {
+                        wallpaper.mClient.dispatchWallpaperCommand(action,
+                                x, y, z, extras, sync);
+                        // We only want to be synchronous with one wallpaper.
+                        sync = false;
+                    } catch (RemoteException e) {
+                    }
+                }
+            }
+
+            if (doWait) {
+                // TODO: Need to wait for result.
+            }
+        }
+
+        return null;
+    }
+
+    void updateWallpaperOffsetLocked(WindowState changingTarget, boolean sync) {
+        final DisplayContent displayContent = changingTarget.getDisplayContent();
+        if (displayContent == null) {
+            return;
+        }
+        final DisplayInfo displayInfo = displayContent.getDisplayInfo();
+        final int dw = displayInfo.logicalWidth;
+        final int dh = displayInfo.logicalHeight;
+
+        WindowState target = mWallpaperTarget;
+        if (target != null) {
+            if (target.mWallpaperX >= 0) {
+                mLastWallpaperX = target.mWallpaperX;
+            } else if (changingTarget.mWallpaperX >= 0) {
+                mLastWallpaperX = changingTarget.mWallpaperX;
+            }
+            if (target.mWallpaperY >= 0) {
+                mLastWallpaperY = target.mWallpaperY;
+            } else if (changingTarget.mWallpaperY >= 0) {
+                mLastWallpaperY = changingTarget.mWallpaperY;
+            }
+            if (target.mWallpaperDisplayOffsetX != Integer.MIN_VALUE) {
+                mLastWallpaperDisplayOffsetX = target.mWallpaperDisplayOffsetX;
+            } else if (changingTarget.mWallpaperDisplayOffsetX != Integer.MIN_VALUE) {
+                mLastWallpaperDisplayOffsetX = changingTarget.mWallpaperDisplayOffsetX;
+            }
+            if (target.mWallpaperDisplayOffsetY != Integer.MIN_VALUE) {
+                mLastWallpaperDisplayOffsetY = target.mWallpaperDisplayOffsetY;
+            } else if (changingTarget.mWallpaperDisplayOffsetY != Integer.MIN_VALUE) {
+                mLastWallpaperDisplayOffsetY = changingTarget.mWallpaperDisplayOffsetY;
+            }
+            if (target.mWallpaperXStep >= 0) {
+                mLastWallpaperXStep = target.mWallpaperXStep;
+            } else if (changingTarget.mWallpaperXStep >= 0) {
+                mLastWallpaperXStep = changingTarget.mWallpaperXStep;
+            }
+            if (target.mWallpaperYStep >= 0) {
+                mLastWallpaperYStep = target.mWallpaperYStep;
+            } else if (changingTarget.mWallpaperYStep >= 0) {
+                mLastWallpaperYStep = changingTarget.mWallpaperYStep;
+            }
+        }
+
+        for (int curTokenNdx = mWallpaperTokens.size() - 1; curTokenNdx >= 0; curTokenNdx--) {
+            WindowList windows = mWallpaperTokens.get(curTokenNdx).windows;
+            for (int wallpaperNdx = windows.size() - 1; wallpaperNdx >= 0; wallpaperNdx--) {
+                WindowState wallpaper = windows.get(wallpaperNdx);
+                if (updateWallpaperOffset(wallpaper, dw, dh, sync)) {
+                    WindowStateAnimator winAnimator = wallpaper.mWinAnimator;
+                    winAnimator.computeShownFrameLocked();
+                    // No need to lay out the windows - we can just set the wallpaper position
+                    // directly.
+                    winAnimator.setWallpaperOffset(wallpaper.mShownPosition);
+                    // We only want to be synchronous with one wallpaper.
+                    sync = false;
+                }
+            }
+        }
+    }
+
+    void clearLastWallpaperTimeoutTime() {
+        mLastWallpaperTimeoutTime = 0;
+    }
+
+    void wallpaperCommandComplete(IBinder window) {
+        if (mWaitingOnWallpaper != null &&
+                mWaitingOnWallpaper.mClient.asBinder() == window) {
+            mWaitingOnWallpaper = null;
+            mService.mWindowMap.notifyAll();
+        }
+    }
+
+    void wallpaperOffsetsComplete(IBinder window) {
+        if (mWaitingOnWallpaper != null &&
+                mWaitingOnWallpaper.mClient.asBinder() == window) {
+            mWaitingOnWallpaper = null;
+            mService.mWindowMap.notifyAll();
+        }
+    }
+
+    int getAnimLayerAdjustment() {
+        return mWallpaperAnimLayerAdjustment;
+    }
+
+    void setAnimLayerAdjustment(WindowState win, int adj) {
+        if (win != mWallpaperTarget || mLowerWallpaperTarget != null) {
+            return;
+        }
+
+        if (DEBUG_LAYERS || DEBUG_WALLPAPER) Slog.v(TAG, "Setting wallpaper layer adj to " + adj);
+        mWallpaperAnimLayerAdjustment = adj;
+        for (int i = mWallpaperTokens.size() - 1; i >= 0; i--) {
+            WindowList windows = mWallpaperTokens.get(i).windows;
+            for (int j = windows.size() - 1; j >= 0; j--) {
+                WindowState wallpaper = windows.get(j);
+                wallpaper.mWinAnimator.mAnimLayer = wallpaper.mLayer + adj;
+                if (DEBUG_LAYERS || DEBUG_WALLPAPER) Slog.v(TAG, "setWallpaper win "
+                        + wallpaper + " anim layer: " + wallpaper.mWinAnimator.mAnimLayer);
+            }
+        }
+    }
+
+    private void findWallpaperTarget(WindowList windows, FindWallpaperTargetResult result) {
+        final WindowAnimator winAnimator = mService.mAnimator;
+        result.reset();
+        WindowState w = null;
+        int windowDetachedI = -1;
+        boolean resetTopWallpaper = false;
+        boolean inFreeformSpace = false;
+        boolean replacing = false;
+        boolean keyguardGoingAwayWithWallpaper = false;
+
+        for (int i = windows.size() - 1; i >= 0; i--) {
+            w = windows.get(i);
+            if ((w.mAttrs.type == TYPE_WALLPAPER)) {
+                if (result.topWallpaper == null || resetTopWallpaper) {
+                    result.setTopWallpaper(w, i);
+                    resetTopWallpaper = false;
+                }
+                continue;
+            }
+            resetTopWallpaper = true;
+            if (w != winAnimator.mWindowDetachedWallpaper && w.mAppToken != null) {
+                // If this window's app token is hidden and not animating,
+                // it is of no interest to us.
+                if (w.mAppToken.hidden && w.mAppToken.mAppAnimator.animation == null) {
+                    if (DEBUG_WALLPAPER) Slog.v(TAG,
+                            "Skipping hidden and not animating token: " + w);
+                    continue;
+                }
+            }
+            if (DEBUG_WALLPAPER) Slog.v(TAG, "Win #" + i + " " + w + ": isOnScreen="
+                    + w.isOnScreen() + " mDrawState=" + w.mWinAnimator.mDrawState);
+
+            if (!inFreeformSpace) {
+                TaskStack stack = w.getStack();
+                inFreeformSpace = stack != null && stack.mStackId == FREEFORM_WORKSPACE_STACK_ID;
+            }
+
+            replacing |= w.mWillReplaceWindow;
+            keyguardGoingAwayWithWallpaper |= (w.mAppToken != null
+                    && w.mWinAnimator.mKeyguardGoingAwayWithWallpaper);
+
+            final boolean hasWallpaper = (w.mAttrs.flags & FLAG_SHOW_WALLPAPER) != 0;
+            if (hasWallpaper && w.isOnScreen() && (mWallpaperTarget == w || w.isDrawFinishedLw())) {
+                if (DEBUG_WALLPAPER) Slog.v(TAG, "Found wallpaper target: #" + i + "=" + w);
+                result.setWallpaperTarget(w, i);
+                if (w == mWallpaperTarget && w.mWinAnimator.isAnimationSet()) {
+                    // The current wallpaper target is animating, so we'll look behind it for
+                    // another possible target and figure out what is going on later.
+                    if (DEBUG_WALLPAPER) Slog.v(TAG,
+                            "Win " + w + ": token animating, looking behind.");
+                    continue;
+                }
+                break;
+            } else if (w == winAnimator.mWindowDetachedWallpaper) {
+                windowDetachedI = i;
+            }
+        }
+
+        if (result.wallpaperTarget != null) {
+            return;
+        }
+
+        if (windowDetachedI >= 0) {
+            if (DEBUG_WALLPAPER_LIGHT) Slog.v(TAG,
+                    "Found animating detached wallpaper activity: #" + windowDetachedI + "=" + w);
+            result.setWallpaperTarget(w, windowDetachedI);
+        } else if (inFreeformSpace || (replacing && mWallpaperTarget != null)) {
+            // In freeform mode we set the wallpaper as its own target, so we don't need an
+            // additional window to make it visible. When we are replacing a window and there was
+            // wallpaper before replacement, we want to keep the window until the new windows fully
+            // appear and can determine the visibility, to avoid flickering.
+            result.setWallpaperTarget(result.topWallpaper, result.topWallpaperIndex);
+
+        } else if (keyguardGoingAwayWithWallpaper) {
+            // If the app is executing an animation because the keyguard is going away (and the
+            // keyguard was showing the wallpaper) keep the wallpaper during the animation so it
+            // doesn't flicker out by having it be its own target.
+            result.setWallpaperTarget(result.topWallpaper, result.topWallpaperIndex);
+        }
+    }
+
+    private boolean updateWallpaperWindowsTarget(
+            WindowList windows, FindWallpaperTargetResult result) {
+
+        boolean targetChanged = false;
+        WindowState wallpaperTarget = result.wallpaperTarget;
+        int wallpaperTargetIndex = result.wallpaperTargetIndex;
+
+        if (mWallpaperTarget != wallpaperTarget
+                && (mLowerWallpaperTarget == null || mLowerWallpaperTarget != wallpaperTarget)) {
+            if (DEBUG_WALLPAPER_LIGHT) Slog.v(TAG,
+                    "New wallpaper target: " + wallpaperTarget + " oldTarget: " + mWallpaperTarget);
+
+            mLowerWallpaperTarget = null;
+            mUpperWallpaperTarget = null;
+
+            WindowState oldW = mWallpaperTarget;
+            mWallpaperTarget = wallpaperTarget;
+            targetChanged = true;
+
+            // Now what is happening...  if the current and new targets are animating,
+            // then we are in our super special mode!
+            if (wallpaperTarget != null && oldW != null) {
+                boolean oldAnim = oldW.isAnimatingLw();
+                boolean foundAnim = wallpaperTarget.isAnimatingLw();
+                if (DEBUG_WALLPAPER_LIGHT) Slog.v(TAG,
+                        "New animation: " + foundAnim + " old animation: " + oldAnim);
+                if (foundAnim && oldAnim) {
+                    int oldI = windows.indexOf(oldW);
+                    if (DEBUG_WALLPAPER_LIGHT) Slog.v(TAG,
+                            "New i: " + wallpaperTargetIndex + " old i: " + oldI);
+                    if (oldI >= 0) {
+                        final boolean newTargetHidden =
+                                wallpaperTarget.mAppToken != null && wallpaperTarget.mAppToken.hiddenReques

@@ -1,0 +1,79 @@
+/*
+ *  Licensed to the Apache Software Foundation (ASF) under one or more
+ *  contributor license agreements.  See the NOTICE file distributed with
+ *  this work for additional information regarding copyright ownership.
+ *  The ASF licenses this file to You under the Apache License, Version 2.0
+ *  (the "License"); you may not use this file except in compliance with
+ *  the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+
+package java.util;
+
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
+
+/**
+ * IdentityHashMap is a variant on HashMap which tests equality by reference
+ * instead of equality by value. Basically, keys and values are compared for
+ * equality by checking if their references are equal rather than by calling the
+ * "equals" function.
+ * <p>
+ * <b>Note: This class intentionally violates the general contract of {@code
+ * Map}'s on comparing objects by their {@code equals} method.</b>
+ * <p>
+ * IdentityHashMap uses open addressing (linear probing in particular) for
+ * collision resolution. This is different from HashMap which uses Chaining.
+ * <p>
+ * Like HashMap, IdentityHashMap is not thread safe, so access by multiple
+ * threads must be synchronized by an external mechanism such as
+ * Collections.synchronizedMap.
+ *
+ * @since 1.4
+ */
+public class IdentityHashMap<K, V> extends AbstractMap<K, V> implements
+        Map<K, V>, Serializable, Cloneable {
+
+    private static final long serialVersionUID = 8188218128353913216L;
+
+    /*
+     * The internal data structure to hold key value pairs This array holds keys
+     * and values in an alternating fashion.
+     */
+    transient Object[] elementData;
+
+    /* Actual number of key-value pairs. */
+    int size;
+
+    /*
+     * maximum number of elements that can be put in this map before having to
+     * rehash.
+     */
+    transient int threshold;
+
+    /*
+     * default threshold value that an IdentityHashMap created using the default
+     * constructor would have.
+     */
+    private static final int DEFAULT_MAX_SIZE = 21;
+
+    /* Default load factor of 0.75; */
+    private static final int loadFactor = 7500;
+
+    /*
+     * modification count, to keep track of structural modifications between the
+     * IdentityHashMap and the iterator
+     */
+    transient int modCount = 0;
+
+    /*
+     * Object used to represent null keys

@@ -1,0 +1,54 @@
+tly the number of occurrences of the {@code Pattern}
+     *            plus one for the text after the final separator.
+     *            All entries are included.
+     *            <li>For n == 0, the result is as for n &lt; 0, except
+     *            trailing empty strings will not be returned. (Note that
+     *            the case where the input is itself an empty string is
+     *            special, as described above, and the limit parameter does
+     *            not apply there.)
+     *            </ul>
+     */
+    public String[] split(CharSequence input, int limit) {
+        return Splitter.split(this, pattern, input.toString(), limit);
+    }
+
+    /**
+     * Equivalent to {@code split(input, 0)}.
+     */
+    public String[] split(CharSequence input) {
+        return split(input, 0);
+    }
+
+    /**
+     * Returns the regular expression supplied to {@code compile}.
+     */
+    public String pattern() {
+        return pattern;
+    }
+
+    @Override
+    public String toString() {
+        return pattern;
+    }
+
+    /**
+     * Returns the flags supplied to {@code compile}.
+     */
+    public int flags() {
+        return flags;
+    }
+
+    /**
+     * Returns a compiled form of the given {@code regularExpression}, as modified by the
+     * given {@code flags}. See the <a href="#flags">flags overview</a> for more on flags.
+     *
+     * @throws PatternSyntaxException if the regular expression is syntactically incorrect.
+     *
+     * @see #CANON_EQ
+     * @see #CASE_INSENSITIVE
+     * @see #COMMENTS
+     * @see #DOTALL
+     * @see #LITERAL
+     * @see #MULTILINE
+     * @see #UNICODE_CASE
+     * @see #UNIX_LINES

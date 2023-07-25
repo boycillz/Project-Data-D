@@ -1,0 +1,197 @@
+ Log.v(TAG, "Exception reading backup input:", e);
+            return TRANSPORT_ERROR;
+        }
+    }
+
+    // Deletes the contents but not the given directory
+    private void deleteContents(File dirname) {
+        File[] contents = dirname.listFiles();
+        if (contents != null) {
+            for (File f : contents) {
+                if (f.isDirectory()) {
+                    // delete the directory's contents then fall through
+                    // and delete the directory itself.
+                    deleteContents(f);
+                }
+                f.delete();
+            }
+        }
+    }
+
+    @Override
+    public int clearBackupData(PackageInfo packageInfo) {
+        if (DEBUG) Log.v(TAG, "clearBackupData() pkg=" + packageInfo.packageName);
+
+        File packageDir = new File(mCurrentSetIncrementalDir, packageInfo.packageName);
+        final File[] fileset = packageDir.listFiles();
+        if (fileset != null) {
+            for (File f : fileset) {
+                f.delete();
+            }
+            packageDir.delete();
+        }
+
+        packageDir = new File(mCurrentSetFullDir, packageInfo.packageName);
+        final File[] tarballs = packageDir.listFiles();
+        if (tarballs != null) {
+            for (File f : tarballs) {
+                f.delete();
+            }
+            packageDir.delete();
+        }
+
+        return TRANSPORT_OK;
+    }
+
+    @Override
+    public int finishBackup() {
+        if (DEBUG) Log.v(TAG, "finishBackup() of " + mFullTargetPackage);
+        return tearDownFullBackup();
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Full backup handling
+
+    private int tearDownFullBackup() {
+        if (mSocket != null) {
+            try {
+                if (mFullBackupOutputStream != null) {
+                    mFullBackupOutputStream.flush();
+                    mFullBackupOutputStream.close();
+                }
+                mSocketInputStream = null;
+                mFullTargetPackage = null;
+                mSocket.close();
+            } catch (IOException e) {
+                if (DEBUG) {
+                    Log.w(TAG, "Exception caught in tearDownFullBackup()", e);
+                }
+                return TRANSPORT_ERROR;
+            } finally {
+                mSocket = null;
+                mFullBackupOutputStream = null;
+            }
+        }
+        return TRANSPORT_OK;
+    }
+
+    private File tarballFile(String pkgName) {
+        return new File(mCurrentSetFullDir, pkgName);
+    }
+
+    @Override
+    public long requestFullBackupTime() {
+        return 0;
+    }
+
+    @Override
+    public int checkFullBackupSize(long size) {
+        int result = TRANSPORT_OK;
+        // Decline zero-size "backups"
+        if (size <= 0) {
+            result = TRANSPORT_PACKAGE_REJECTED;
+        } else if (size > FULL_BACKUP_SIZE_QUOTA) {
+            result = TRANSPORT_QUOTA_EXCEEDED;
+        }
+        if (result != TRANSPORT_OK) {
+            if (DEBUG) {
+                Log.v(TAG, "Declining backup of size " + size);
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public int performFullBackup(PackageInfo targetPackage, ParcelFileDescriptor socket) {
+        if (mSocket != null) {
+            Log.e(TAG, "Attempt to initiate full backup while one is in progress");
+            return TRANSPORT_ERROR;
+        }
+
+        if (DEBUG) {
+            Log.i(TAG, "performFullBackup : " + targetPackage);
+        }
+
+        // We know a priori that we run in the system process, so we need to make
+        // sure to dup() our own copy of the socket fd.  Transports which run in
+        // their own processes must not do this.
+        try {
+            mFullBackupSize = 0;
+            mSocket = ParcelFileDescriptor.dup(socket.getFileDescriptor());
+            mSocketInputStream = new FileInputStream(mSocket.getFileDescriptor());
+        } catch (IOException e) {
+            Log.e(TAG, "Unable to process socket for full backup");
+            return TRANSPORT_ERROR;
+        }
+
+        mFullTargetPackage = targetPackage.packageName;
+        mFullBackupBuffer = new byte[4096];
+
+        return TRANSPORT_OK;
+    }
+
+    @Override
+    public int sendBackupData(final int numBytes) {
+        if (mSocket == null) {
+            Log.w(TAG, "Attempted sendBackupData before performFullBackup");
+            return TRANSPORT_ERROR;
+        }
+
+        mFullBackupSize += numBytes;
+        if (mFullBackupSize > FULL_BACKUP_SIZE_QUOTA) {
+            return TRANSPORT_QUOTA_EXCEEDED;
+        }
+
+        if (numBytes > mFullBackupBuffer.length) {
+            mFullBackupBuffer = new byte[numBytes];
+        }
+
+        if (mFullBackupOutputStream == null) {
+            FileOutputStream tarstream;
+            try {
+                File tarball = tarballFile(mFullTargetPackage);
+                tarstream = new FileOutputStream(tarball);
+            } catch (FileNotFoundException e) {
+                return TRANSPORT_ERROR;
+            }
+            mFullBackupOutputStream = new BufferedOutputStream(tarstream);
+        }
+
+        int bytesLeft = numBytes;
+        while (bytesLeft > 0) {
+            try {
+            int nRead = mSocketInputStream.read(mFullBackupBuffer, 0, bytesLeft);
+            if (nRead < 0) {
+                // Something went wrong if we expect data but saw EOD
+                Log.w(TAG, "Unexpected EOD; failing backup");
+                return TRANSPORT_ERROR;
+            }
+            mFullBackupOutputStream.write(mFullBackupBuffer, 0, nRead);
+            bytesLeft -= nRead;
+            } catch (IOException e) {
+                Log.e(TAG, "Error handling backup data for " + mFullTargetPackage);
+                return TRANSPORT_ERROR;
+            }
+        }
+        if (DEBUG) {
+            Log.v(TAG, "   stored " + numBytes + " of data");
+        }
+        return TRANSPORT_OK;
+    }
+
+    // For now we can't roll back, so just tear everything down.
+    @Override
+    public void cancelFullBackup() {
+        if (DEBUG) {
+            Log.i(TAG, "Canceling full backup of " + mFullTargetPackage);
+        }
+        File archive = tarballFile(mFullTargetPackage);
+        tearDownFullBackup();
+        if (archive.exists()) {
+            archive.delete();
+        }
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Restore handling
+    
